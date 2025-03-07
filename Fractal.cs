@@ -12,6 +12,7 @@ public class Fractal : MonoBehaviour
     [SerializeField] private Mesh mesh;
     [SerializeField] private Material material;
     public FractalPart[][] parts;
+    Matrix4x4[][] matrices; 
 
     static Quaternion[] quatrnionDirs = new Quaternion[] {Quaternion.Euler(0f, 0f, -90f),
         Quaternion.identity,Quaternion.Euler(0f,0f,90f),Quaternion.Euler(0f,90f,0f),
@@ -27,17 +28,23 @@ public class Fractal : MonoBehaviour
         //public keyword only makes these components public in Fractal as Struct FractalPart is private! 
         public Quaternion rotation,worldRotation;
         //public Transform transform;//Transfrom To scale!//No Longer Required as we use Procedural Drawing and do not require a gameObject;
-            
+        public float spinAngle;
     }
 
+    ComputeBuffer[] matricesBuffers;
     
-    
-    private void Awake()
+    private void OnEnable()
     {
         parts = new FractalPart[depth][]; //here we create dataStructure
+        matrices = new Matrix4x4[depth][];//4x4 matrix for each fractal part;
+        matricesBuffers = new ComputeBuffer[depth];
+        int stride = 16 * 4;
+
         for (int i = 0, length = 1; i < parts.Length; i++, length *= 5) //as there are five directions so (5 is multiplied)
         {                                                               //each iteration gets 5times the last items
             parts[i] = new FractalPart[length];
+            matrices[i] = new Matrix4x4[length];//five times more parts so 5 times Matrices
+            matricesBuffers[i] = new ComputeBuffer(length,stride);
         }
 
 
@@ -59,28 +66,60 @@ public class Fractal : MonoBehaviour
         }
     }
 
+    private void OnDisable()
+    {
+        for (int i = 0; i < matricesBuffers.Length; i++) 
+        {
+            matricesBuffers[i].Release();
+        }
+        parts = null;
+        matrices = null;
+        matricesBuffers = null;
+
+        
+    }
+
+    private void OnValidate()//Editor-only function that Unity calls when the
+                             //script is loaded or a value changes in the Inspector
+    {
+        if (parts != null && enabled) 
+        {
+            OnDisable(); 
+            OnEnable();
+        }
+        
+    }
+
     private void Update()
     {
         Quaternion deltaRotation = Quaternion.Euler(0f,22.5f*Time.deltaTime,0f);
 
+        float spinAngleDelta = 22.5f * Time.deltaTime;
+
         FractalPart rootPart = parts[0][0];
-        rootPart.rotation *= deltaRotation;
-        rootPart.worldRotation = rootPart.rotation;
+        //rootPart.rotation *= deltaRotation;
+        rootPart.spinAngle += spinAngleDelta;
+        rootPart.worldRotation = rootPart.rotation*Quaternion.Euler(0f,rootPart.spinAngle,0f);
         parts[0][0] = rootPart;
+        matrices[0][0] = Matrix4x4.TRS(rootPart.worldPosition,rootPart.worldRotation,Vector3.one);
 
         float scale = 1f;
         for (int li = 1; li < parts.Length; li++) 
         {
+            scale *= 0.5f;
             FractalPart[] parentParts = parts[li - 1];
             FractalPart[] levelParts = parts[li];
+            Matrix4x4[] levelMatrices = matrices[li];
             for (int fpi=0; fpi < levelParts.Length; fpi++) 
             {
                 FractalPart parent = parentParts[fpi / 5];
                 FractalPart part = levelParts[fpi];
+                part.spinAngle += spinAngleDelta;
                 part.rotation *= deltaRotation;
-                part.worldRotation = parent.worldRotation*part.rotation; 
-                part.worldPosition = parent.worldPosition + parent.worldRotation*(1.50f*part.worldRotation.x * part.direction);
+                part.worldRotation = parent.worldRotation*(part.rotation*Quaternion.Euler(0f,part.spinAngle,0f)); 
+                part.worldPosition = parent.worldPosition + parent.worldRotation*(1.50f*scale * part.direction);
                 levelParts[fpi] = part;
+                levelMatrices[fpi] = Matrix4x4.TRS(part.worldPosition,part.worldRotation,scale*Vector3.one);
                 //part.transform.localRotation = part.rotation;
             }
         }
